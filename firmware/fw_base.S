@@ -48,40 +48,48 @@
 _start:
 	/* Find preferred boot HART id */
 	MOV_3R	s0, a0, s1, a1, s2, a2
-	call	fw_boot_hart
-	add	a6, a0, zero
+	call	fw_boot_hart // a0 <- -1, take back value from a0 
+	add	a6, a0, zero // a6 <- -1
 	MOV_3R	a0, s0, a1, s1, a2, s2
-	li	a7, -1
+	li	a7, -1 // a7 -1
 	beq	a6, a7, _try_lottery
 	/* Jump to relocation wait loop if we are not boot hart */
 	bne	a0, a6, _wait_for_boot_hart
 _try_lottery:
 	/* Jump to relocation wait loop if we don't get relocation lottery */
-	lla	a6, _boot_lottery
-	li	a7, BOOT_LOTTERY_ACQUIRED
-	amoswap.w a6, a7, (a6)
-	bnez	a6, _wait_for_boot_hart
+	lla	a6, _boot_lottery // award value 0, it's address in a6
+	li	a7, BOOT_LOTTERY_ACQUIRED // lottery value 1, who can win the award?
+	amoswap.w a6, a7, (a6) // use lottery value 1 exchange award value 0, try it
+	bnez	a6, _wait_for_boot_hart // if 1, net win the award
 
 	/* relocate the global table content */
-	li	t0, FW_TEXT_START	/* link start */
-	lla	t1, _fw_start		/* load start */
-	sub	t2, t1, t0		/* load offset */
-	lla	t0, __rel_dyn_start
-	lla	t1, __rel_dyn_end
+	li	t0, FW_TEXT_START	/* link start, default 0x80000000, defined in fw_base_ldS, specific value in platform/objects.mk */ 
+	lla	t1, _fw_start		/* load start, default 0x80000000 */
+	sub	t2, t1, t0		/* load offset , if same , offset is 0 */
+	lla	t0, __rel_dyn_start /* default 0x8001a000 */
+	lla	t1, __rel_dyn_end /* default 0x8001b3b0 */
 	beq	t0, t1, _relocate_done
 2:
-	REG_L	t5, REGBYTES(t0)	/* t5 <-- relocation info:type */
+	/* Use readelf -all fw_payload.elf, will see Relocation section conntains a 210 entries map.
+	 * here is an example 
+	 * Offset     Info     Type     Sym.Value     Sym.Name + Addend
+	 * 80020038    3   R_RISCV_RELATIVE             80001542 (sbi_ipi_update_halt)
+	 * 80020048    3   R_RISCV_RELATIVE             80001554 (sbi_ipi_process_halt)
+	 * ......
+	 * 80020bd8    2   R_RISCV_64                   80020bd0 domain_list + 0
+	 */
+	REG_L	t5, REGBYTES(t0)	/* t5 <-- relocation info:type, riscv elf specificatoin, relocation type */
 	li	t3, R_RISCV_RELATIVE	/* reloc type R_RISCV_RELATIVE */
 	bne	t5, t3, 3f
-	REG_L	t3, 0(t0)
-	REG_L	t5, (REGBYTES * 2)(t0)	/* t5 <-- addend */
-	add	t5, t5, t2
+	REG_L	t3, 0(t0)  /* t3 <- 80020038 */
+	REG_L	t5, (REGBYTES * 2)(t0)	/* t5 <-- addend, eg: t5 <- 80001542*/
+	add	t5, t5, t2 /* both t3 and t5 will add offset */
 	add	t3, t3, t2
-	REG_S	t5, 0(t3)		/* store runtime address to the GOT entry */
+	REG_S	t5, 0(t3)		/* store runtime address to the GOT entry, eg: R-GOT is 800020038 as show above */
 
 3:
-	addi	t0, t0, (REGBYTES * 3)
-	blt	t0, t1, 2b
+	addi	t0, t0, (REGBYTES * 3) /* each map entry's size */
+	blt	t0, t1, 2b /* all 210 entries will relocate */
 _relocate_done:
 	/* At this point we are running from link address */
 

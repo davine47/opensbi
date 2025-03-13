@@ -217,7 +217,7 @@ static unsigned long init_count_offset;
 
 static void __noreturn init_coldboot(struct sbi_scratch *scratch, u32 hartid)
 {
-	int rc;
+	int rc; // return code
 	unsigned long *count;
 	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
 
