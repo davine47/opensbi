@@ -101,7 +101,7 @@ _relocate_done:
 	lla	s4, _bss_start
 	lla	s5, _bss_end
 _bss_zero:
-	REG_S	zero, (s4)
+	REG_S	zero, (s4) /* init bss */
 	add	s4, s4, __SIZEOF_POINTER__
 	blt	s4, s5, _bss_zero
 
@@ -112,23 +112,23 @@ _bss_zero:
 	/*
 	 * While at this point, trap handling is rudimentary, if a trap happens,
 	 * it will end up in _start_hang which is enough to hook up a GDB. Clear
-	 * MDT to avoid generating a double trap and thus entering a
+	 * MDT(M-mode-disable-trap bit in mstatus) to avoid generating a double trap and thus entering a
 	 * critical-error state.
 	 */
 	CLEAR_MDT t0
 
 	/* Setup temporary stack */
-	lla	s4, _fw_end
-	li	s5, (SBI_SCRATCH_SIZE * 2)
-	add	sp, s4, s5
+	lla	s4, _fw_end /* fw_end <- 80023000 */
+	li	s5, (SBI_SCRATCH_SIZE * 2) /* SBI_SCRATCH_SIZE default is 4kb */
+	add	sp, s4, s5 /* sp <- 80025000 */
 
 	/* Allow main firmware to save info */
 	MOV_5R	s0, a0, s1, a1, s2, a2, s3, a3, s4, a4
-	call	fw_save_info
+	call	fw_save_info /* Only dynamic mode needs to pass info to next boot stage */
 	MOV_5R	a0, s0, a1, s1, a2, s2, a3, s3, a4, s4
 
 #ifdef FW_FDT_PATH
-	/* Override previous arg1 */
+	/* Override previous arg1, note: a0 is hartid, a1 is fdt path */
 	lla	a1, fw_fdt_bin
 #endif
 
@@ -143,13 +143,13 @@ _bss_zero:
 	MOV_5R	a0, s0, a1, s1, a2, s2, a3, s3, a4, s4
 	add	a1, t0, zero
 
-	/* Preload HART details
+	/* Preload HART details (defined in platform/platform.c)
 	 * s7 -> HART Count
 	 * s8 -> HART Stack Size
 	 * s9 -> Heap Size
-	 * s10 -> Heap Offset
+	 * s10 -> Heap Offset relative to fw_start
 	 */
-	lla	a4, platform
+	lla	a4, platform  /* define in platform/objects.mk, it's an OBJECT(.o file) */
 #if __riscv_xlen > 32
 	lwu	s7, SBI_PLATFORM_HART_COUNT_OFFSET(a4)
 	lwu	s8, SBI_PLATFORM_HART_STACK_SIZE_OFFSET(a4)
@@ -160,14 +160,21 @@ _bss_zero:
 	lw	s9, SBI_PLATFORM_HEAP_SIZE_OFFSET(a4)
 #endif
 
+	/* Hart 's stacks and heap init */
 	/* Setup scratch space for all the HARTs*/
+	/*     *
+	 *     | stack   
+	 *   -------
+	 *     | heap
+	 *     *
+	 */
 	lla	tp, _fw_end
 	mul	a5, s7, s8
-	add	tp, tp, a5
+	add	tp, tp, a5 /* stack_p = _fw_end + (hartid * hart stack size) */
 	/* Setup heap base address */
-	lla	s10, _fw_start
-	sub	s10, tp, s10
-	add	tp, tp, s9
+	lla	s10, _fw_start /* eg: _fw_start is 80000000 */
+	sub	s10, tp, s10 /* s10 <- stack_p - _fw_start */
+	add	tp, tp, s9 /* address pointer = stack_p + heap_size */
 	/* Keep a copy of tp */
 	add	t3, tp, zero
 	/* Counter */
@@ -175,6 +182,7 @@ _bss_zero:
 	/* hartid 0 is mandated by ISA */
 	li	t1, 0
 _scratch_init:
+    /* associate with sbi_platform.h, struct used in c */
 	/*
 	 * The following registers hold values that are computed before
 	 * entering this block, and should remain unchanged.
